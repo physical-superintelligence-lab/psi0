@@ -55,7 +55,7 @@ if repo_root not in sys.path:
 
 from psi.config.config import LaunchConfig, ServerConfig
 from psi.deploy.helpers import *
-from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything
+from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything, apply_legacy_model_config_defaults
 from psi.deploy.dashboard import (
     update_dashboard, reset_dashboard, dashboard_loop, log_every, redirect_logs_to_file,
 )
@@ -375,8 +375,9 @@ class Server:
         # first build dynamic config 
         config_: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt") # type: ignore
         # then load it from previsously saved json
-        conf = (run_dir / "run_config.json").open("r").read()
-        launch_config = config_.model_validate_json(conf)
+        conf = apply_legacy_model_config_defaults(
+            json.loads((run_dir / "run_config.json").read_text()))
+        launch_config = config_.model_validate(conf)
         seed_everything(launch_config.seed or 42)
 
         # Opt-in (PSI_RTC_INIT_PREV=1): let the client seed the FIRST chunk with a

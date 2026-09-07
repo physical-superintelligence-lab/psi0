@@ -23,7 +23,8 @@ while project_root != project_root.parent and not (project_root / "pyproject.tom
     project_root = project_root.parent
 os.chdir(project_root)
 
-from psi.utils import parse_args_to_tyro_config, seed_everything
+import json
+from psi.utils import parse_args_to_tyro_config, seed_everything, apply_legacy_model_config_defaults
 from psi.config.config import LaunchConfig
 
 CKPT_STEP = 40000
@@ -63,8 +64,9 @@ def parse_args():
 
 def load_config(run_dir: Path) -> LaunchConfig:
     config_: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt")  # type: ignore
-    conf = (run_dir / "run_config.json").read_text()
-    launch_config = config_.model_validate_json(conf)
+    conf = apply_legacy_model_config_defaults(
+        json.loads((run_dir / "run_config.json").read_text()))
+    launch_config = config_.model_validate(conf)
     return launch_config
 
 

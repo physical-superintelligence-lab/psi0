@@ -151,7 +151,9 @@ class ServerConfig(BaseModel):
     pig_sigma_threshold: float = 0.15
     pig_guidance_alpha: float = 0.9
 
-    num_inference_steps: int = 8
+    # Flow-sampling steps at inference. 10 is what the released psi0 checkpoints
+    # were validated with; lowering it trades action quality for latency.
+    num_inference_steps: int = 10
 
     @model_validator(mode="after")
     def set_policy(self):

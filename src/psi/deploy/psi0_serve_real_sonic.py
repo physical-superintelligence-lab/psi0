@@ -18,7 +18,8 @@ from torchvision.transforms import v2
 from psi.deploy.helpers import *
 from psi.config.config import LaunchConfig, ServerConfig
 from psi.config.transform import SimpleRepackTransform, Psi0ModelTransform, ActionStateTransform
-from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything
+import json
+from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything, apply_legacy_model_config_defaults
 from psi.utils.overwatch import initialize_overwatch 
 
 overwatch = initialize_overwatch(__name__)
@@ -47,8 +48,9 @@ class Server:
 
         # load launch config 
         config_: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt") # type: ignore
-        conf = (run_dir / "run_config.json").open("r").read()
-        launch_config = config_.model_validate_json(conf)
+        conf = apply_legacy_model_config_defaults(
+            json.loads((run_dir / "run_config.json").read_text()))
+        launch_config = config_.model_validate(conf)
         seed_everything(launch_config.seed or 42)
 
         from psi.models.psi0 import Psi0Model 

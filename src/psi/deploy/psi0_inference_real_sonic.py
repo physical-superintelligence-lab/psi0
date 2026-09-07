@@ -13,14 +13,16 @@ dotenv.load_dotenv()
 
 import torch
 import numpy as np
-from psi.utils import parse_args_to_tyro_config  #, seed_everything, move_to_device, batchify
+import json
+from psi.utils import parse_args_to_tyro_config, apply_legacy_model_config_defaults  #, seed_everything, move_to_device, batchify
 from psi.config.config import LaunchConfig
 
 ckpt_step = 40000
 run_dir = Path(".runs/sonic/sonic.lantent64.nortc.real.flow1000.cosine.lr1.0e-04.b128.gpus4.2604120038")
 config_:LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt") # type: ignore
-conf = (run_dir / "run_config.json").open("r").read()
-launch_config = config_.model_validate_json(conf)
+conf = apply_legacy_model_config_defaults(
+    json.loads((run_dir / "run_config.json").read_text()))
+launch_config = config_.model_validate(conf)
 
 
 from psi.config.data_lerobot import LerobotDataConfig

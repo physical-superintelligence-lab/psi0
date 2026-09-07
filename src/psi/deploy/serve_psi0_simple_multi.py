@@ -26,7 +26,7 @@ Two things the batching has to respect:
     Same-task clients land in a single group and batch for real either way.
 
   * RTC state (`previous_action`) is per-client, keyed by an id the client sends in
-    `history["client_id"]` (falling back to the peer address).
+    `history["client_id"]` or `history["session_id"]` (falling back to the peer host).
 """
 
 import asyncio
@@ -154,11 +154,14 @@ class BatchServer(Server):
     # ------------------------------------------------------------------ per-request
 
     def _client_id(self, req: Pending, history: Dict[str, Any]) -> str:
-        cid = history.get("client_id") if isinstance(history, dict) else None
+        history = history if isinstance(history, dict) else {}
+        # `session_id` is what the SIMPLE eval client sends (simple/baselines/psi0.py).
+        cid = history.get("client_id") or history.get("session_id")
         if cid:
             return str(cid)
-        # No id from the client: fall back to the peer address. Stable for the lifetime of a
-        # keep-alive connection, which is what a control loop uses.
+        # No id from the client: fall back to the peer host. Not the port -- a client that
+        # posts without keep-alive (requests.post per step) draws a fresh ephemeral port
+        # every call, which would key a brand new RTC state on every request.
         if req.peer not in self._warned_no_client_id:
             self._warned_no_client_id.add(req.peer)
             overwatch.warning(
@@ -378,7 +381,7 @@ class BatchServer(Server):
     # ------------------------------------------------------------------ endpoints
 
     async def predict_action(self, payload: Dict[str, Any], request: Request) -> JSONResponse:  # type: ignore[override]
-        peer = f"{request.client.host}:{request.client.port}" if request.client else "unknown"
+        peer = request.client.host if request.client else "unknown"
         pending = Pending(
             payload=payload,
             peer=peer,
@@ -401,7 +404,7 @@ class BatchServer(Server):
         content["expected_keys"]["history"] = {
             "reset": "optional",
             "client_id": "optional but recommended - keys per-client RTC state; "
-                         "defaults to the peer address",
+                         "`session_id` is accepted too, else the peer host",
         }
         return JSONResponse(content=content)
 

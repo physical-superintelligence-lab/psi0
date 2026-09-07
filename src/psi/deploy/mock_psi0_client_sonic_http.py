@@ -30,7 +30,8 @@ import requests
 from tqdm.auto import tqdm
 from transformers import AutoProcessor
 
-from psi.utils import parse_args_to_tyro_config, seed_everything
+import json
+from psi.utils import parse_args_to_tyro_config, seed_everything, apply_legacy_model_config_defaults
 from psi.utils.overwatch import initialize_overwatch
 from psi.config.config import LaunchConfig
 from psi.deploy.helpers import RequestMessage, ResponseMessage
@@ -70,8 +71,9 @@ def parse_args():
 
 def load_config(run_dir: Path) -> LaunchConfig:
     config_: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt")  # type: ignore
-    conf = (run_dir / "run_config.json").read_text()
-    return config_.model_validate_json(conf)
+    conf = apply_legacy_model_config_defaults(
+        json.loads((run_dir / "run_config.json").read_text()))
+    return config_.model_validate(conf)
 
 
 def denormalize_state(norm_state: np.ndarray, field) -> np.ndarray:

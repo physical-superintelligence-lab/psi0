@@ -19,7 +19,8 @@ from torchvision.transforms import v2
 from psi.deploy.helpers import *
 from psi.config.config import LaunchConfig, ServerConfig
 from psi.config.transform import SimpleRepackTransform, Psi0ModelTransform, ActionStateTransform
-from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything
+import json
+from psi.utils import parse_args_to_tyro_config, pad_to_len, seed_everything, apply_legacy_model_config_defaults
 from psi.utils.overwatch import initialize_overwatch 
 
 overwatch = initialize_overwatch(__name__)
@@ -59,8 +60,9 @@ class Server:
 
         # load launch config 
         config_: LaunchConfig = parse_args_to_tyro_config(run_dir / "argv.txt") # type: ignore
-        conf = (run_dir / "run_config.json").open("r").read()
-        launch_config = config_.model_validate_json(conf)
+        conf = apply_legacy_model_config_defaults(
+            json.loads((run_dir / "run_config.json").read_text()))
+        launch_config = config_.model_validate(conf)
         seed_everything(launch_config.seed or 42)
 
         from psi.models.psi0 import Psi0Model 
@@ -251,7 +253,11 @@ class Server:
         if not self.enable_rtc:
             return  # no cross-request state -> concurrent clients are merely serialized
         history_dict = history_dict if isinstance(history_dict, dict) else {}
-        client = str(history_dict.get("client_id") or peer)
+        # `session_id` is what the SIMPLE eval client sends (simple/baselines/psi0.py);
+        # `client_id` is what serve_psi0_simple_multi documents. Accept either.
+        client = str(history_dict.get("client_id")
+                     or history_dict.get("session_id")
+                     or peer)
 
         with self._session_lock:
             idle = time.monotonic() - self.last_serve_time
@@ -323,9 +329,12 @@ class Server:
 
     def predict_action(self, payload: Dict[str, Any], http_request: Request) -> JSONResponse:
         # overwatch.info(f"Received request with payload: {payload}")
-        # host:port -> unique per TCP connection, so no client-side id field is required
-        peer = (f"{http_request.client.host}:{http_request.client.port}"
-                if http_request.client else "unknown")
+        # Last-resort identity, used only when the client sends no session/client id.
+        # It must be the host alone: a client that does not keep the connection alive
+        # (requests.post per step, as the SIMPLE eval client does) draws a fresh
+        # ephemeral port every call, so host:port would read as a new client on every
+        # request and 409 the whole episode away.
+        peer = http_request.client.host if http_request.client else "unknown"
         try:
             request = RequestMessage.deserialize(payload)
             image_dict, instruction, history_dict, state_dict, gt_action, dataset_name = \

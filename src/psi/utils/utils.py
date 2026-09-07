@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import random
 import re
@@ -525,3 +526,42 @@ def cfg_json_default(o):
         return o.item()
     return repr(o)
 
+
+# Fields added to the model config after some checkpoints were already trained. A
+# run_config.json written before the field existed carries no entry for it, and
+# pydantic then fills in today's default -- which silently changes what the loaded
+# weights compute (same parameter shapes, different forward). Serving must reproduce
+# the head the checkpoint was trained with, so back-fill the pre-flag behaviour
+# whenever the key is absent.
+#
+#   final_layer_norm: the action head. False is the legacy `x * scale + shift`;
+#     True (today's default) is `LayerNorm(x) * (1 + scale) + shift`. Both have the
+#     same weights, so a legacy checkpoint loads clean and then emits garbage
+#     actions -- the policy runs, the robot fails the task.
+LEGACY_MODEL_CONFIG_DEFAULTS: dict[str, Any] = {
+    "final_layer_norm": False,
+}
+
+def apply_legacy_model_config_defaults(conf: dict[str, Any]) -> dict[str, Any]:
+    """Fill model-config keys a pre-flag run_config.json does not carry (in place)."""
+    model_conf = conf.get("model")
+    if not isinstance(model_conf, dict):
+        return conf
+    for key, legacy_value in LEGACY_MODEL_CONFIG_DEFAULTS.items():
+        if key not in model_conf:
+            model_conf[key] = legacy_value
+            print(f"[legacy ckpt] run_config.json predates `model.{key}`; "
+                  f"serving with {key}={legacy_value} (the value it was trained with)")
+    return conf
+
+def load_launch_config(run_dir: Path | str):
+    """Rebuild the LaunchConfig a checkpoint was trained with, from its run dir.
+
+    Reads argv.txt for the config class and run_config.json for the values, then
+    back-fills the defaults of any config field added after the run was written.
+    """
+    run_dir = Path(run_dir)
+    config_ = parse_args_to_tyro_config(run_dir / "argv.txt")
+    conf = apply_legacy_model_config_defaults(
+        json.loads((run_dir / "run_config.json").read_text()))
+    return config_.model_validate(conf)
