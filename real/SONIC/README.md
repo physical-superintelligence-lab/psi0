@@ -1,74 +1,91 @@
-# Ψ₀ with SONIC — Teleoperation & Data Collection
+# Ψ₀ with SONIC and Dex1-1
 
-We follow the official [SONIC](https://github.com/NVlabs/GR00T-WholeBodyControl) setup. Run all commands from the submodule root `third_party/GR00T-WholeBodyControl`.
+This adapter keeps SONIC's official launcher, PICO manager, data exporter, and
+RTC client as the control flow. Psi0 only injects the installed Dex1-1 grippers:
 
-## Setup (on the workstation)
+- measured scalar gripper positions are projected to SONIC's hand14 interface;
+- PICO trigger targets are sent to Dex1 and recorded as the same virtual hand14;
+- policy hand14 output is mapped back to the physical grippers;
+- the existing SIMPLE Remote Vision transport relays SONIC's `ego_view` to PICO.
 
-Fetch the LFS assets, then install the per-use-case environments with SONIC's install scripts (each creates an isolated `uv` venv):
-
-```bash
-git lfs pull
-
-bash install_scripts/install_pico.sh              # .venv_teleop          — VR teleoperation
-bash install_scripts/install_data_collection.sh   # .venv_data_collection — LeRobot recorder
-bash install_scripts/install_mujoco_sim.sh        # .venv_sim             — MuJoCo simulation
-
-python download_from_hf.py                         # SONIC policy + planner ONNX
-```
-
-For the C++ whole-body controller and the PICO VR hardware, follow SONIC's official docs:
-- [Deployment build (TensorRT + `just build`)](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/installation_deploy.html)
-- [VR teleop setup (XRoboToolkit)](https://nvlabs.github.io/GR00T-WholeBodyControl/getting_started/vr_teleop_setup.html)
-
-## Camera server (on the robot)
-
-Reuse the `vision` conda env created in the robot [Image Server setup](../README.md#image-server-robot-only) (it already has `pyrealsense2`, `opencv`, `pyzmq`); just add the three remaining packages:
+The SONIC and SIMPLE submodules must be initialized. The wrapper uses an
+existing conda `sonic` environment instead of creating additional environments:
 
 ```bash
-conda activate vision
-pip install msgpack msgpack-numpy tyro
+git submodule update --init --recursive
+export SONIC_CONDA_PREFIX="$HOME/miniconda3/envs/sonic"
 ```
 
-Copy the SONIC camera module from the workstation (run from the submodule root; G1 default IP `192.168.123.164`):
+`SONIC_DIR` may point to a separate official SONIC checkout. Otherwise it
+defaults to `third_party/GR00T-WholeBodyControl`.
+
+## Camera server
+
+Run SONIC's official composed camera server on the robot:
 
 ```bash
-ssh unitree@192.168.123.164 mkdir -p ~/SONIC_psi0_release/gear_sonic
-scp gear_sonic/__init__.py gear_sonic/version.py unitree@192.168.123.164:~/SONIC_psi0_release/gear_sonic/
-scp -r gear_sonic/camera unitree@192.168.123.164:~/SONIC_psi0_release/gear_sonic/
-scp real/SONIC/realsense_server.py unitree@192.168.123.164:~/SONIC_psi0_release/
+python -m gear_sonic.camera.composed_camera \
+  --ego-view-camera realsense \
+  --port 5555
 ```
 
-Start the server on the robot (keep it running):
+## Data collection
+
+The entry point delegates tmux creation and process lifecycle to SONIC's
+official `launch_data_collection.py`. It replaces only the manager, exporter,
+and viewer commands with their Dex1-aware counterparts:
 
 ```bash
-conda activate vision
-cd ~/SONIC_psi0_release
-python -m gear_sonic.camera.composed_camera --ego-view-camera realsense --port 5555
+bash real/SONIC/scripts/collect_psi0-sonic-data.sh \
+  --camera-host 192.168.123.164 \
+  --network enp4s0 \
+  --task-prompt 'Pick up the object and place it in the container.' \
+  --dataset-name sonic_dex1 \
+  --root-output-dir "$HOME/data"
 ```
 
-## Run
+The official camera-viewer pane is used for the PICO ego-view relay. In Remote
+Vision, select H.264 and connect to `<workstation-ip>:13579`. Pass
+`--no-camera-viewer` to disable this relay.
 
-Edit `ROBOT_IP` / `TASK` at the top of the script (recording runs at 30 fps to match the camera), then:
+The manager retains SONIC's official mode state machine. Because Remote Vision
+uses physical B and the four-face-button chord, the wrapper makes only these
+input substitutions:
+
+- hold Right Stick Click for 0.6 seconds: policy on/off;
+- `Left Grip + A`: start/stop an episode;
+- `Left Grip + Y`: discard an episode;
+- `A + X`: switch between Planner and full-body POSE.
+
+Press `Ctrl+\` to terminate the official tmux session. No extra episode-quality
+gate is added; saving and discarding use SONIC's exporter behavior.
+
+## Conversion
+
+The official raw SONIC schema remains unchanged. Dex1 recordings add only an
+`end_effector=dex1_virtual14` marker. Conversion preserves the dense hand14
+targets from SONIC's `teleop.left_hand_joints` and
+`teleop.right_hand_joints` columns:
 
 ```bash
-bash ./real/SONIC/scripts/collect_psi0-sonic-data.sh sim   # MuJoCo test (no robot/camera, no recording)
-bash ./real/SONIC/scripts/collect_psi0-sonic-data.sh       # real robot — records to outputs/ (LeRobot format)
+"$SONIC_CONDA_PREFIX/bin/python" scripts/data/raw_sonic_to_psi_lerobot.py \
+  --data-root "$HOME/data/sonic_dex1" \
+  --work-dir "$PWD/data/sonic/lerobot" \
+  --repo-id sonic_dex1 \
+  --robot-type g1 \
+  --end-effector dex1_virtual14
+
+"$SONIC_CONDA_PREFIX/bin/python" scripts/data/calc_modality_stats.py \
+  --task-dir "$PWD/data/sonic/lerobot/sonic_dex1"
+cp data/sonic/lerobot/sonic_dex1/meta/stats.json \
+   data/sonic/lerobot/sonic_dex1/meta/stats_psi0.json
 ```
 
-Engage teleop and record per SONIC's [data collection tutorial](https://nvlabs.github.io/GR00T-WholeBodyControl/tutorials/data_collection.html): calibration pose → **A+B+X+Y** → **A+X**, then **left grip + A** to start/stop an episode (**left grip + B** to discard).The data will be saved to `third_party/GR00T-WholeBodyControl/outputs/` in LeRobot format.
+Training then uses Psi0's existing official SONIC configuration without model
+or trainer changes.
 
-No tmux? Run each component in its own terminal instead:
+## Deployment
 
-```bash
-# sim teleop test
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh sim          # MuJoCo
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh deploy sim   # C++ controller (sim)
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh pico         # PICO streamer
-```
-
-```bash
-# real robot
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh deploy       # C++ controller
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh pico         # PICO streamer
-bash ./real/SONIC/scripts/collect_psi0-sonic-data-manual.sh exporter     # data exporter (records)
-```
+See [DEPLOYMENT.md](DEPLOYMENT.md). Deployment keeps the official four-process
+flow and wraps only the RTC client so Dex1 state and action use the same mapping
+as collection and conversion.

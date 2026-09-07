@@ -1,8 +1,10 @@
-# Ψ₀ with SONIC — Real-World Deployment Guide
+# Ψ₀ with SONIC + Dex1-1 — Real-World Deployment
 
-Please run the following commands.
+This follows Psi0's official four-process RTC flow. Dex1-1 is represented as a
+dense virtual hand14 at the model interface and routed to two physical grippers
+by the client adapter. Keep each command running in its own terminal.
 
-## 1. Launch the camera server on the robot (keep it running):
+## 1. Camera server on the robot
 
 ```bash
 conda activate vision
@@ -10,22 +12,46 @@ cd ~/SONIC_psi0_release
 python realsense_server.py
 ```
 
-## 2. Launch the policy server on the workstation (keep it running):
+## 2. Psi0 policy server on the workstation
 
 ```bash
-bash ./scripts/deploy/serve_psi0-rtc-sonic.sh
+cd /path/to/Psi0
+export CHECKPOINT_DIR=/path/to/psi0-sonic-run
+export CHECKPOINT_STEP=40000
+bash scripts/deploy/serve_psi0-rtc-sonic.sh
 ```
 
-## 3. Launch the whole-body controller on the robot (keep it running):
+Wait for `Application startup complete` before continuing.
+
+## 3. SONIC whole-body controller
 
 ```bash
-bash ./real/scripts/deploy_psi0-sonic-rtc-robot.sh
+cd /path/to/Psi0
+bash real/scripts/deploy_psi0-sonic-rtc-robot.sh real
 ```
 
-When you see "Init done." You can press the **]** button to set the robot stand up. After that, you can press **ENTER** to start deploying the policy. When you finish the deployment, you can press **ENTER** again to stop the policy and set the robot back to the default pose.
+Confirm the real deployment. When `Init done.` appears, press **`]`** once and
+wait for the robot to settle in its default standing reference. Do not enable
+the ZMQ stream yet.
 
-## 4. Launch the policy client on the workstation:
+## 4. Psi0 client with Dex1-1 adapter
 
 ```bash
-bash ./real/scripts/deploy_psi0-sonic-rtc-client.sh
+cd /path/to/Psi0
+export SONIC_CONDA_PREFIX="$HOME/miniconda3/envs/sonic"
+bash real/scripts/deploy_psi0-sonic-rtc-client.sh \
+  --host 127.0.0.1 \
+  --port 8014 \
+  --camera-address tcp://192.168.123.164:5558 \
+  --network enp4s0 \
+  --instruction 'Pick up the object and place it in the container.' \
+  --enable-dex1-live
 ```
+
+Wait until the client prints `recv_action interval` and `Received action`.
+Then press **Enter** once in the C++ controller terminal. The controller must
+print `ZMQ STREAMING MODE: ENABLED` before policy execution begins.
+
+To finish normally, press **Enter** again to return to the default reference,
+stop the client with **Ctrl+C**, then press **O** in the C++ terminal to exit.
+Press **O** immediately for an emergency stop.
